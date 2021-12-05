@@ -1,0 +1,495 @@
+using System;
+using System.Linq;
+using System.IO;
+using System.Text;
+using System.Collections;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Security.Cryptography.X509Certificates;
+using System.Dynamic;
+using System.Runtime.CompilerServices;
+using Microsoft.VisualBasic.CompilerServices;
+using System.Threading;
+
+class Player
+{
+    static void Main(string[] args)
+    {
+
+        Parser.Initialize();
+        AI.Action();
+        while (true)
+        {
+            Parser.ParseTurn();
+            AI.Action();
+        }
+    }
+}
+static class AI
+{
+    static private Data data = Data.GetInstance();
+    public static void Action()
+    {
+        //Gather();
+        foreach(MyPac pac in data.MyActivePacs)
+        {
+            pac.MoveToSector();
+        }
+        Console.WriteLine(data.Answer);
+        void Gather()
+        {
+            foreach (MyPac pac in data.MyActivePacs)
+            {
+                pac.Move(new Position(5, 5));
+            }
+        }
+
+    }
+
+
+}
+class Region
+{
+    public List<Position> SmallPellets;
+    public List<Position> BigPellets;
+    public List<Position> Reachable;
+    public List<Position> NotVisited;
+    public Position Position { get; set; }
+    public Region(Position start, Position end)
+    {
+        SmallPellets = new List<Position>();
+        BigPellets = new List<Position>();
+        Reachable = new List<Position>();
+        NotVisited = new List<Position>();
+        Position = new Position(Math.Abs(end.X - start.X), Math.Abs(end.Y - start.Y));
+        FormFields(start, end);
+    }
+    void FormFields(Position start, Position end)
+    {
+        Data data = Data.GetInstance();
+        for (int h = start.Y; h <= end.Y; h++)
+            for (int w = start.X; w <= end.X; w++)
+            {
+                Tile tile = data.Map.Tiles[h, w];
+                if (tile.Value == 1)
+                    SmallPellets.Add(tile.Position);
+                if (tile.Value == 10)
+                    BigPellets.Add(tile.Position);
+                if (tile.IsReachable)
+                    Reachable.Add(tile.Position);
+                if (tile.IsReachable && !tile.IsVisited)
+                    NotVisited.Add(tile.Position);
+            }
+    }
+}
+public class Analizator
+{
+    public static Position GetClosestPosition(List<Position> positions, Position point)
+    {
+        int distance = 0;
+        Position result = point;
+        foreach (Position pos in positions)
+        {
+            int _dist = GetDistance(pos, point);
+            if (distance == 0 || _dist < distance)
+            {
+                distance = _dist;
+                result = pos;
+            }
+        }
+        return result;
+    }
+    public static int GetDistance(Position start, Position end)
+    {
+        int distance = Math.Abs(end.X - start.X) + Math.Abs(end.Y - start.Y);
+        return distance;
+    }
+}
+
+static class Parser
+{
+    public static void Initialize()
+    {
+        ParseMap();
+        ParseFirstTurn();
+        CreateSectors(5);
+
+
+        void ParseFirstTurn()
+        {
+            ParsePacs();
+            ParsePellets();
+            void ParsePacs()
+            {
+                Data data = Data.GetInstance();
+                string[] inputs = Console.ReadLine().Split(' ');
+                int visiblePacCount = int.Parse(Console.ReadLine()); // all your pacs and enemy pacs in sight
+                List<MyPac> myPacs = new List<MyPac>();
+                List<EnemyPac> enemyPacs = new List<EnemyPac>();
+                for (int i = 0; i < visiblePacCount; i++)
+                {
+                    inputs = Console.ReadLine().Split(' ');
+                    bool mine = inputs[1] != "0"; // true if this pac is yours
+                    int pacId = int.Parse(inputs[0]); // pac number (unique within a team)
+                    int x = int.Parse(inputs[2]); // position in the grid
+                    int y = int.Parse(inputs[3]); // position in the grid
+                    string typeId = inputs[4]; // unused in wood leagues
+                    int speedTurnsLeft = int.Parse(inputs[5]); // unused in wood leagues
+                    int abilityCooldown = int.Parse(inputs[6]); // unused in wood leagues
+                    if (mine)
+                    {
+                        MyPac myPac = new MyPac()
+                        {
+                            Id = pacId,
+                            Position = new Position(x, y),
+                            FormerPosition = new Position(x, y),
+                            Type = new Type() { Element = typeId },
+                            SpeedTurnsLeft = speedTurnsLeft,
+                            AbilityCooldown = abilityCooldown
+                        };
+                        myPacs.Add(myPac);
+                        EnemyPac enemyPac = new EnemyPac()
+                        {
+                            Id = pacId,
+                            Position = new Position(data.Map.Width - x + 1, y),
+                            FormerPosition = new Position(data.Map.Width - x + 1, y),
+                            Type = new Type() { Element = typeId },
+                            SpeedTurnsLeft = speedTurnsLeft,
+                            AbilityCooldown = abilityCooldown
+                        };
+                        enemyPacs.Add(enemyPac);
+                    }
+                }
+                int quantity = myPacs.Count;
+                data.MyPacs = myPacs.OrderBy(t => t.Id).ToArray();
+                data.EnemyPacs = enemyPacs.OrderBy(t => t.Id).ToArray();
+                data.MyActivePacs = new Stack<MyPac>();
+                data.EnemyActivePacs = new Stack<EnemyPac>();
+                myPacs.ForEach(data.MyActivePacs.Push);
+                enemyPacs.ForEach(data.EnemyActivePacs.Push);
+            }
+
+        }
+
+        void ParseMap()
+        {
+            Data data = Data.GetInstance();
+            string[] inputs = Console.ReadLine().Split(' ');
+            int width = int.Parse(inputs[0]); // size of the grid
+            int height = int.Parse(inputs[1]); // top left corner is (x=0, y=0)
+            data.Map = new Map(height, width);
+            for (int h = 0; h < height; h++)
+            {
+                string row = Console.ReadLine(); // one line of the grid: space " " is floor, pound "#" is wall
+                for (int w = 0; w < row.Length; w++)
+                {
+                    data.Map.Tiles[h, w] = new Tile(w, h);
+                    if (row[w] == ' ')
+                        data.Map.Tiles[h, w].IsReachable = true;
+                    else
+                        data.Map.Tiles[h, w].IsReachable = false;
+                }
+            }
+        }
+        void CreateSectors(int cellLenght)
+        {
+            Data data = Data.GetInstance();
+            data.Sectors = new List<Region>();
+            List<Region> sectors = data.Sectors;
+            int width = data.Map.Width;
+            int height = data.Map.Height;
+            int hCellsQuantity = height % cellLenght;
+            int wCellsQuantity = width % cellLenght;
+            for (int h = 0; h < hCellsQuantity; h++)
+                for (int w = 0; w < wCellsQuantity; w++)
+                {
+                    Position start = new Position(w * cellLenght, h * cellLenght);
+                    int endX = w * cellLenght + cellLenght - 1;
+                    int endY = h * cellLenght + cellLenght - 1;
+                    if (w == wCellsQuantity - 1)
+                        endX = width - 1;
+                    if (h == hCellsQuantity - 1)
+                        endY = height - 1;
+                    Position end = new Position(endX, endY);
+                    Region region = new Region(start, end);
+                    sectors.Add(region);
+                }
+        }
+    }
+    public static void ParseTurn()
+    {
+        ParsePacs();
+        ParsePellets();
+        void ParsePacs()
+        {
+            Data data = Data.GetInstance();
+            data.Turn++;
+            string[] inputs = Console.ReadLine().Split(' ');
+            int visiblePacCount = int.Parse(Console.ReadLine()); // all your pacs and enemy pacs in sight
+            for (int i = 0; i < visiblePacCount; i++)
+            {
+                inputs = Console.ReadLine().Split(' ');
+                bool mine = inputs[1] != "0"; // true if this pac is yours
+                int pacId = int.Parse(inputs[0]); // pac number (unique within a team)
+                Pac pac;
+                if (mine)
+                {
+                    pac = data.MyPacs[pacId];
+                    data.MyActivePacs.Push(pac as MyPac);
+                }
+                else
+                {
+                    pac = data.EnemyPacs[pacId];
+                    data.EnemyActivePacs.Push(pac as EnemyPac);
+                }
+                int x = int.Parse(inputs[2]); // position in the grid
+                int y = int.Parse(inputs[3]); // position in the grid
+                pac.Position = new Position(x, y);
+                pac.Type.Element = inputs[4]; // unused in wood leagues
+                pac.SpeedTurnsLeft = int.Parse(inputs[5]); // unused in wood leagues
+                pac.AbilityCooldown = int.Parse(inputs[6]); // unused in wood leagues
+            }
+
+        }
+    }
+    private static void ParsePellets()
+    {
+        Data data = Data.GetInstance();
+        int visiblePelletCount = int.Parse(Console.ReadLine()); // all pellets in sight
+        for (int i = 0; i < visiblePelletCount; i++)
+        {
+            string[] inputs = Console.ReadLine().Split(' ');
+            int x = int.Parse(inputs[0]);
+            int y = int.Parse(inputs[1]);
+            int value = int.Parse(inputs[2]); // amount of points this pellet is worth
+            Tile tile = data.Map.Tiles[y, x];
+            if (value == 10)
+            {
+                data.BigPellets.Push(tile);
+                tile.Value = 10;
+            }
+            else
+            {
+                data.SmallPellets.Push(tile);
+                tile.Value = 1;
+            }
+        }
+    }
+
+}
+class Data
+{
+    private static Data Instance { get; set; }
+    public Map Map { get; set; }
+
+    public MyPac[] MyPacs { get; set; }
+    public EnemyPac[] EnemyPacs { get; set; }
+    public Stack<MyPac> MyActivePacs { get; set; }
+    public Stack<EnemyPac> EnemyActivePacs { get; set; }
+    public Stack<Tile> BigPellets { get; set; }
+    public Stack<Tile> SmallPellets { get; set; }
+    public List<Region> Sectors { get; set; }
+    public string Answer { get; set; }
+    private int turn = 1;
+    public int Turn
+    {
+        get { return 1; }
+        set
+        {
+            turn++;
+            ResetTurnData();
+        }
+    }
+
+    private Data()
+    {
+        Turn = 1;
+        SmallPellets = new Stack<Tile>();
+        BigPellets = new Stack<Tile>();
+    }
+    public static Data GetInstance()
+    {
+        if (Instance == null) Instance = new Data();
+        return Instance;
+    }
+    private void ResetTurnData()
+    {
+        while (EnemyActivePacs?.Count > 0)
+        {
+            EnemyPac pac = EnemyActivePacs.Pop();
+            Map.Tiles[pac.Position.Y, pac.Position.X].IsReachable = true;
+        }
+        while (MyActivePacs?.Count > 0)
+        {
+            MyPac pac = MyActivePacs.Pop();
+            pac.HasMoved = false;
+            Map.Tiles[pac.Position.Y, pac.Position.X].IsReachable = true;
+        }
+        while (BigPellets?.Count > 0)
+        {
+            Tile tile = BigPellets.Pop();
+            tile.Value = 0;
+        }
+        while (SmallPellets?.Count > 0)
+        {
+            Tile tile = SmallPellets.Pop();
+            tile.Value = 0;
+        }
+        Answer = "";
+    }
+}
+class Map
+{
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public Tile[,] Tiles;
+    public Map(int height, int width)
+    {
+        Width = width;
+        Height = height;
+        Tiles = new Tile[height, width];
+    }
+}
+
+
+class Tile
+{
+    public Position Position { get; set; }
+    public int Value { get; set; }
+    public bool IsVisited;
+    public bool IsReachable;
+    public Tile(int x, int y)
+    {
+        Position = new Position(x, y);
+        Value = 0;
+    }
+}
+public class Position
+{
+    public int X { get; set; }
+    public int Y { get; set; }
+    public Position(int x, int y)
+    {
+        X = x;
+        Y = y;
+    }
+    public static Position operator +(Position position, int range)
+    {
+        int posX = position.X + range;
+        int posY = position.Y + range;
+        int width = Data.GetInstance().Map.Width;
+        int height = Data.GetInstance().Map.Height;
+
+        if (posX >= width)
+            posX = width - 1;
+        if (position.Y + range >= height)
+            posY = height - 1;
+
+        return new Position(posX, posY);
+    }
+    public static Position operator -(Position position, int range)
+    {
+        int posX = position.X + range;
+        int posY = position.Y + range;
+        int width = Data.GetInstance().Map.Width;
+        int height = Data.GetInstance().Map.Height;
+
+        if (posX < 0)
+            posX = 0;
+        if (position.Y + range < 0)
+            posY = 0;
+
+        return new Position(posX, posY);
+    }
+}
+class Pac
+{
+    protected Data data;
+    public Position FormerPosition { get; set; }
+    private Position position;
+    public Position Position
+    {
+        get { return position; }
+        set
+        {
+            FormerPosition = position;
+            position = value;
+            data.Map.Tiles[value.Y, value.X].IsReachable = false;
+        }
+    }
+    public Type Type { get; set; }
+    public int Id { get; set; }
+    public int SpeedTurnsLeft { get; set; }
+    public int AbilityCooldown { get; set; }
+
+    public Pac()
+    {
+        data = Data.GetInstance();
+    }
+}
+class MyPac : Pac
+{
+    public bool HasMoved = false;
+    public bool HasTask = false;
+    public Position TargetPosition { get; set; }
+    public Region Sector;
+    public void Move(Position target)
+    {
+        if (!HasMoved)
+            data.Answer += $"MOVE {Id} {Position.X} {Position.Y}|";
+    }
+    public void MoveToSector()
+    {
+        Region sector = null;
+        FindSector();
+        CreateTask();
+        
+        void FindSector()
+        {
+            int distance = 0;
+            for (int i = 0; i < data.Sectors.Count; i++)
+            {
+                int _dist = Analizator.GetDistance(Position, data.Sectors[i].Position);
+                if (i == 0 || distance > _dist)
+                {
+                    distance = _dist;
+                    sector = data.Sectors[i];
+                    data.Sectors.Remove(sector);
+                }
+            }
+
+        }
+        void CreateTask()
+        {
+            TargetPosition = Analizator.GetClosestPosition(sector.NotVisited, Position);
+            HasTask = true;
+            if (!HasMoved)
+            {
+                data.Answer += $"MOVE {Id } {TargetPosition.X} {TargetPosition.Y}|";
+                HasMoved = true;
+            }
+        }
+    }
+    public void Task()
+    {
+        if (!HasTask) return;
+        if (TargetPosition == Position)
+        {
+            HasTask = false;
+        } else  if (!HasMoved)
+        {
+            data.Answer += $"MOVE {Id } {TargetPosition.X} {TargetPosition.Y}|";
+            HasMoved = true;
+        }
+    }
+
+}
+class EnemyPac : Pac
+{
+
+}
+
+class Type
+{
+    public string Element { get; set; }
+}
